@@ -28,8 +28,13 @@ async fn close_session(target: &Url, uid: Uuid) {
         .unwrap();
     assert_ok(resp).await;
 }
-async fn init_http_session(target: &Url) -> Trace<Uuid> {
-    let resp = CLIENT.get(join_url(target, ["open"])).send().await.unwrap();
+async fn init_http_session(target: &Url, headers: &Vec<String>) -> Trace<Uuid> {
+    // TODO: use headers in requests
+    let resp = CLIENT
+        .get(join_url(target, ["open"]))
+        .send()
+        .await
+        .unwrap();
     let resp = assert_ok(resp).await;
     return Ok(Uuid::from_bytes(
         match identity::<&[u8]>(&resp.bytes().await.unwrap()).try_into() {
@@ -43,12 +48,13 @@ async fn init_http_session(target: &Url) -> Trace<Uuid> {
     ));
 }
 
-async fn upload_req<S>(target: &Url, uid: Uuid, data: S)
+async fn upload_req<S>(target: &Url, headers: &Vec<String>, uid: Uuid, data: S)
 where
     S: futures::TryStream + Send + Sync + 'static,
     S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     bytes::Bytes: From<S::Ok>,
 {
+    // todo: use headers in requests
     let resp = CLIENT
         .post(join_url(target, ["upload/", &uid.to_string()]))
         .body(Body::wrap_stream(data))
@@ -61,8 +67,10 @@ where
 
 async fn download_req(
     target: &Url,
+    headers: &Vec<String>,
     uid: Uuid,
 ) -> impl futures::Stream<Item = reqwest::Result<Bytes>> {
+    // TODO: use headers in requests
     let resp = CLIENT
         .get(join_url(target, ["download/", &uid.to_string()]))
         .send()
@@ -72,8 +80,8 @@ async fn download_req(
     return resp.bytes_stream();
 }
 
-async fn process_socket(target_url: Arc<Url>, socket: tokio::net::TcpStream) -> Trace<Uuid> {
-    let uid = init_http_session(&target_url).await?;
+async fn process_socket(target_url: Arc<Url>, headers: Vec<String>, socket: tokio::net::TcpStream) -> Trace<Uuid> {
+    let uid = init_http_session(&target_url, &headers).await?;
     println!("HTTP Server copies. Established session {uid:#x?}");
 
     let (s_read, mut s_write) = socket.into_split();
@@ -84,6 +92,7 @@ async fn process_socket(target_url: Arc<Url>, socket: tokio::net::TcpStream) -> 
     let upload_join = {
         let stop_download = stop_download.clone();
         let target_url = target_url.clone();
+        let headers = headers.clone();
         let s_read = artex(s_read);
         async move {
             #[allow(clippy::never_loop)]
@@ -102,7 +111,7 @@ async fn process_socket(target_url: Arc<Url>, socket: tokio::net::TcpStream) -> 
                     }
                 });
                 let stream = valve.wrap(stream);
-                upload_req(&target_url, uid, stream).await;
+                upload_req(&target_url, &headers, uid, stream).await;
                 //200
                 break;
             }
@@ -112,13 +121,14 @@ async fn process_socket(target_url: Arc<Url>, socket: tokio::net::TcpStream) -> 
 
     let download_join = {
         let target_url = target_url.clone();
+        let headers = headers.clone();
         async move {
             #[allow(clippy::never_loop)]
             loop {
                 use futures::TryStreamExt;
                 use tokio_util::compat::FuturesAsyncReadCompatExt;
 
-                let s = download_req(&target_url, uid).await;
+                let s = download_req(&target_url, &headers, uid).await;
                 let mut r = s
                     .map_while(|x| match x {
                         Ok(x) => Some(Ok(x)),
@@ -151,6 +161,7 @@ async fn process_socket(target_url: Arc<Url>, socket: tokio::net::TcpStream) -> 
 pub async fn main(
     bind_addr: &[SocketAddr],
     target_url: Url,
+    headers: Vec<String>,
 ) -> (SocketAddr, impl Future<Output = Infallible>) {
     //console_subscriber::init();
     let listener_result = TcpListener::bind(bind_addr).await;
@@ -185,10 +196,11 @@ pub async fn main(
         loop {
             let (socket, _) = listener.accept().await.unwrap();
             let target_url = target_url.clone();
+            let headers = headers.clone();
             let _join_handle = tokio::spawn(async move {
                 #[cfg(test)]
                 AC.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                drop(dbg!(process_socket(target_url, socket).await));
+                drop(dbg!(process_socket(target_url, headers, socket).await));
                 #[cfg(test)]
                 AC.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
             });

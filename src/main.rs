@@ -57,6 +57,9 @@ enum CommandMode {
         /// URL of the exit node.
         #[clap(short, long, value_parser)]
         target_url: Url,
+
+        #[clap(short, long, value_parser)]
+        headers: Vec<String>,
     },
     /// Spin up exit node. Receives incoming HTTP and forwards TCP.
     Exit {
@@ -112,8 +115,9 @@ async fn main() {
         CommandMode::Entry {
             bind_addr,
             target_url,
+            headers,
         } => {
-            entry::main(&bind_addr.resolve().await, target_url)
+            entry::main(&bind_addr.resolve().await, target_url, headers)
                 .await
                 .1
                 .await;
