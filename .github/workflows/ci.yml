@@ -1,0 +1,39 @@
+on: [push]
+
+name: build
+
+jobs:
+  tcp-over-http:
+    name: tcp-over-http
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - name: 'checkout code'
+      uses: actions/checkout@v1
+    - uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: nightly
+        override: true
+    - uses: swatinem/rust-cache@v2
+    - name: build tcp-over-http
+      uses: actions-rs/cargo@v1
+      with:
+        command: build
+        args: --release
+    - uses: docker/setup-buildx-action@v2
+    - uses: docker/login-action@v2
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - uses: docker/build-push-action@v4
+      with:
+        file: Dockerfile
+        context: '.'
+        push: true
+        tags: |
+          ghcr.io/nikitavbv/tcp-over-http/tcp-over-http:latest
+          ghcr.io/nikitavbv/tcp-over-http/tcp-over-http:0.1.${{ github.run_number }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
