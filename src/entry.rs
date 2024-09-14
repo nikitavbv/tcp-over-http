@@ -4,7 +4,7 @@ use crate::{artex, join_url};
 
 use bytes::Bytes;
 use futures::Future;
-use reqwest::{Body, Client, Response, Url};
+use reqwest::{Body, Client, Response, Url, header::{HeaderMap, HeaderName, HeaderValue}};
 use std::convert::{identity, Infallible, TryInto};
 use std::io::ErrorKind;
 use std::net::SocketAddr;
@@ -28,10 +28,11 @@ async fn close_session(target: &Url, uid: Uuid) {
         .unwrap();
     assert_ok(resp).await;
 }
-async fn init_http_session(target: &Url, headers: &Vec<String>) -> Trace<Uuid> {
+async fn init_http_session(target: &Url, headers: HeaderMap<HeaderValue>) -> Trace<Uuid> {
     // TODO: use headers in requests
     let resp = CLIENT
         .get(join_url(target, ["open"]))
+        .headers(headers)
         .send()
         .await
         .unwrap();
@@ -48,7 +49,7 @@ async fn init_http_session(target: &Url, headers: &Vec<String>) -> Trace<Uuid> {
     ));
 }
 
-async fn upload_req<S>(target: &Url, headers: &Vec<String>, uid: Uuid, data: S)
+async fn upload_req<S>(target: &Url, headers: HeaderMap<HeaderValue>, uid: Uuid, data: S)
 where
     S: futures::TryStream + Send + Sync + 'static,
     S::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -57,6 +58,7 @@ where
     // todo: use headers in requests
     let resp = CLIENT
         .post(join_url(target, ["upload/", &uid.to_string()]))
+        .headers(headers)
         .body(Body::wrap_stream(data))
         .send()
         .await
@@ -67,12 +69,13 @@ where
 
 async fn download_req(
     target: &Url,
-    headers: &Vec<String>,
+    headers: HeaderMap<HeaderValue>,
     uid: Uuid,
 ) -> impl futures::Stream<Item = reqwest::Result<Bytes>> {
     // TODO: use headers in requests
     let resp = CLIENT
         .get(join_url(target, ["download/", &uid.to_string()]))
+        .headers(headers)
         .send()
         .await
         .unwrap();
@@ -80,8 +83,8 @@ async fn download_req(
     return resp.bytes_stream();
 }
 
-async fn process_socket(target_url: Arc<Url>, headers: Vec<String>, socket: tokio::net::TcpStream) -> Trace<Uuid> {
-    let uid = init_http_session(&target_url, &headers).await?;
+async fn process_socket(target_url: Arc<Url>, headers: HeaderMap<HeaderValue>, socket: tokio::net::TcpStream) -> Trace<Uuid> {
+    let uid = init_http_session(&target_url, headers.clone()).await?;
     println!("HTTP Server copies. Established session {uid:#x?}");
 
     let (s_read, mut s_write) = socket.into_split();
@@ -111,7 +114,7 @@ async fn process_socket(target_url: Arc<Url>, headers: Vec<String>, socket: toki
                     }
                 });
                 let stream = valve.wrap(stream);
-                upload_req(&target_url, &headers, uid, stream).await;
+                upload_req(&target_url, headers.clone(), uid, stream).await;
                 //200
                 break;
             }
@@ -128,7 +131,7 @@ async fn process_socket(target_url: Arc<Url>, headers: Vec<String>, socket: toki
                 use futures::TryStreamExt;
                 use tokio_util::compat::FuturesAsyncReadCompatExt;
 
-                let s = download_req(&target_url, &headers, uid).await;
+                let s = download_req(&target_url, headers.clone(), uid).await;
                 let mut r = s
                     .map_while(|x| match x {
                         Ok(x) => Some(Ok(x)),
@@ -163,6 +166,20 @@ pub async fn main(
     target_url: Url,
     headers: Vec<String>,
 ) -> (SocketAddr, impl Future<Output = Infallible>) {
+    let headers = {
+        let mut parsed_headers = HeaderMap::new();
+        for header in headers {
+            let colon_index = header.find(':').unwrap();
+            let (k, v) = header.split_at(colon_index);
+            let k = k.trim().to_owned().to_lowercase();
+            let v = v.trim().to_owned();
+            let header_name = HeaderName::from_lowercase(k.as_bytes()).unwrap();
+            let header_value = HeaderValue::from_str(&v).unwrap();
+            parsed_headers.insert(header_name, header_value);
+        }
+        parsed_headers
+    };
+
     //console_subscriber::init();
     let listener_result = TcpListener::bind(bind_addr).await;
     if let Err(bind_err) = listener_result {
