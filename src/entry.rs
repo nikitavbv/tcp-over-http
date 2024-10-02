@@ -172,7 +172,7 @@ pub async fn main(
             let colon_index = header.find(':').unwrap();
             let (k, v) = header.split_at(colon_index);
             let k = k.trim().to_owned().to_lowercase();
-            let v = v.trim().to_owned();
+            let v = &v[1..].trim().to_owned();
             let header_name = HeaderName::from_lowercase(k.as_bytes()).unwrap();
             let header_value = HeaderValue::from_str(&v).unwrap();
             parsed_headers.insert(header_name, header_value);
