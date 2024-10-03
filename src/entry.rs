@@ -29,7 +29,6 @@ async fn close_session(target: &Url, uid: Uuid) {
     assert_ok(resp).await;
 }
 async fn init_http_session(target: &Url, headers: HeaderMap<HeaderValue>) -> Trace<Uuid> {
-    // TODO: use headers in requests
     let resp = CLIENT
         .get(join_url(target, ["open"]))
         .headers(headers)
