@@ -20,9 +20,10 @@ lazy_static::lazy_static! {
     pub(crate) static ref CLIENT: Client = Client::new();
 }
 
-async fn close_session(target: &Url, uid: Uuid) {
+async fn close_session(target: &Url, uid: Uuid, headers: HeaderMap<HeaderValue>) {
     let resp = CLIENT
         .get(join_url(target, ["close/", &uid.to_string()]))
+        .headers(headers)
         .send()
         .await
         .unwrap();
@@ -156,7 +157,7 @@ async fn process_socket(target_url: Arc<Url>, headers: HeaderMap<HeaderValue>, s
     let download_join = tokio::spawn(download_join);
     upload_join.await.unwrap();
     download_join.await.unwrap();
-    close_session(&target_url, uid).await;
+    close_session(&target_url, uid, headers).await;
     return Ok(uid);
 }
 
